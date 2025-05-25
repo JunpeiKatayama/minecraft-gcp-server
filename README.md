@@ -1,140 +1,48 @@
-# Minecraft GCP Server 構築手順
-
-このリポジトリは、Terraform を使って Google Cloud Platform (GCP) 上に Minecraft サーバーを構築・自動管理するためのものです。
-
----
-
-## 必要なもの
-
-- GCP プロジェクト
-- サービスアカウントキー（JSON）
-- Terraform（推奨: 1.0 以上）
-- Git Bash などのターミナル
-
----
-
-## 1. GCP API の有効化
-
-下記リンクから各 API のページを開き、右上の「プロジェクト選択」でご自身のプロジェクトを選択し、「有効にする」ボタンを押してください。
-
-- [Identity and Access Management (IAM) API](https://console.developers.google.com/apis/api/iam.googleapis.com/overview)
-- [Compute Engine API](https://console.developers.google.com/apis/api/compute.googleapis.com/overview)
-- [Cloud Resource Manager API](https://console.developers.google.com/apis/api/cloudresourcemanager.googleapis.com/overview)
-- [Cloud Functions API](https://console.developers.google.com/apis/api/cloudfunctions.googleapis.com/overview)
-- [Cloud Scheduler API](https://console.developers.google.com/apis/api/cloudscheduler.googleapis.com/overview)
-- [Cloud Storage API](https://console.developers.google.com/apis/api/storage.googleapis.com/overview)
-- [Artifact Registry API](https://console.developers.google.com/apis/api/artifactregistry.googleapis.com/overview)
-- [Cloud Build API](https://console.developers.google.com/apis/api/cloudbuild.googleapis.com/overview)
-
----
-
-## 2. サービスアカウントキーの準備
-
-GCP コンソールでサービスアカウントを作成し、JSON キーをダウンロードします。
-例: `C:\Users\jupei\gcp-key.json`
-
----
-
-## 3. Cloud Function の準備
-
-`cloud-function/` ディレクトリ内に、Cloud Function の本体である `main.py` と、Python の依存パッケージを記述した `requirements.txt` を用意します。
-
-Terraform が自動的にこのディレクトリの内容を zip 化し、デプロイします。
-
-- `main.py` … Cloud Function 本体（例：下記参照）
-- `requirements.txt` … 依存パッケージ（例：下記参照）
-
-```python
-# cloud-function/main.py の例
-import os
-# ... (関数の中身)
-
-def main(request):
-    # ...
-    return "OK"
-```
-
-```text
-# cloud-function/requirements.txt の例
-google-api-python-client
-google-auth
-```
-
----
-
-## 4. 変数ファイルの編集
-
-`terraform.tfvars` に GCP プロジェクト ID を記載します。
-例:
-
-```
-project_id = "your-gcp-project-id"
-```
-
----
-
-## 5. Terraform の実行
-
-1. サービスアカウントキーのパスを環境変数に設定
-
-   ```bash
-   export GOOGLE_APPLICATION_CREDENTIALS="/c/Users/jupei/gcp-key.json"
-   ```
-
-2. Terraform 初期化
-
-   ```bash
-   terraform init
-   ```
-
-3. プラン作成
-
-   ```bash
-   terraform plan
-   ```
-
-4. 適用
-   ```bash
-   terraform apply
-   ```
-   （`yes` と入力して適用）
-
----
-
-## 6. 結果の確認
-
-- 適用後、サーバーの外部 IP や Cloud Function の URL が表示されます。
-- 再度確認したい場合は
-  ```bash
-  terraform output
-  ```
-  で出力値を確認できます。
-
----
-
-## 7. 注意事項
-
-- API 有効化後は反映まで数分かかる場合があります。
-- `cloud-function.zip` がないとエラーになります。
-- `.gitignore` で `*.tfvars` や `*.json` など機密情報は git 管理から除外されています。
-
----
-
-## 8. 参考
-
-- GCP 公式: [Terraform GCP Provider](https://registry.terraform.io/providers/hashicorp/google/latest/docs)
-- Minecraft 公式: [サーバーダウンロード](https://www.minecraft.net/ja-jp/download/server)
-
----
-
-何か問題が発生した場合は、エラーメッセージをよく読み、API の有効化やファイルの配置を再確認してください。
-
----
-
 ## 📦 プロジェクト概要
 
-このプロジェクトは、Google Cloud Platform (GCP) 上に **1〜3 人向けの Minecraft Java Edition サーバー** を構築するための Terraform 構成です。
-無接続時にインスタンスを自動停止し、コストを最小限に抑える仕組みを含みます。
+このプロジェクトは、Google Cloud Platform (GCP) 上に **1〜3 人向けの Minecraft Java Edition サーバー** を構築し、Discord Bot を通じて管理するための Terraform 構成です。
+主な機能は以下の通りです。
+
+- Minecraft サーバーの自動構築 (Debian 12, Java 21, 指定バージョン Minecraft Server)
+- サーバー無接続時の GCE インスタンス自動停止によるコスト最適化
+- Discord Bot (Python, Cloud Run) による以下の操作:
+  - サーバー停止時の Discord 通知（「サーバー起動」ボタン付き）
+  - Discord からの VM 起動と IP アドレス通知
+  - Discord からの VM 状態確認
+
+---
+
+## 💰 予想コスト (現時点での試算)
+
+この構成で発生する可能性のある主なコストは以下の通りです。これらの多くは GCP の無料枠の範囲に収まるか、非常に低コストで運用できる可能性があります。
+**実際のコストは、リージョン、VM の稼働時間、ストレージ使用量、ネットワークトラフィックなどによって変動します。**
+
+- **Google Compute Engine (GCE):**
+  - VM インスタンス (`e2-small` デフォルト): サーバー起動中のみ課金されます。`asia-northeast1` (東京) で `e2-small` を常時稼働させた場合、月額約 $15〜$20 程度です (2024 年 1 月時点)。自動停止機能により、実際のプレイ時間に応じた料金になります。
+  - ブートディスク (20GB デフォルト): 低容量であれば無料枠の範囲または月額数ドル未満。
+  - 外部 IP アドレス: VM 起動中のみエフェメラル IP アドレスを使用するため、通常は追加料金なし。静的 IP アドレスを予約すると別途料金が発生します。
+- **Cloud Functions:**
+  - 無料枠が比較的大きく (月間 200 万リクエスト等)、このプロジェクトの用途 (5 分ごとの実行) であれば通常無料枠内に収まる見込みです。
+- **Cloud Scheduler:**
+  - 無料枠 (月間 3 ジョブまで無料) の範囲内で動作します。
+- **Cloud Storage:**
+  - Cloud Function のソースコード (zip ファイル) の保存に使用します。容量は非常に小さいため、コストはほぼ発生しません。
+- **Artifact Registry:**
+  - Docker イメージの保存に使用します。小規模なプロジェクトであれば無料枠 (最初の 0.5GiB/月まで無料など) の範囲に収まるか、月額数ドル未満の見込みです。
+- **Cloud Build:**
+  - 無料枠 (1 日あたり 120 ビルド分無料など) があります。Bot のコード更新頻度が低ければ無料枠内に収まる可能性があります。
+- **Cloud Run:**
+  - Discord Bot のホスティングに使用します。常時 1 インスタンスを起動せず、リクエストに応じてスケールする設定 (min_instance_count = 0) のため、無料枠 (CPU、メモリ、リクエスト数など) が大きく、この Bot の用途であれば無料枠内に収まるか、月額数ドル未満で運用できる可能性が高いです。
+- **ネットワークトラフィック:**
+  - 主に Minecraft サーバーのプレイによる下りトラフィックが課金対象となりますが、小規模サーバーであれば大きな金額にはなりにくいです。
+
+**コスト削減のポイント:**
+
+- VM の自動停止機能が最も効果的です。
+- 不要なリソース (古いスナップショット、未使用の静的 IP など) を定期的に確認・削除する。
+- GCP の料金計算ツールや請求ダッシュボードでコストを監視する。
+
+**あくまで現時点での一般的な試算であり、詳細な見積もりは GCP の料金計算ツールをご利用ください。**
 
 ---
 
@@ -147,84 +55,220 @@ minecraft-gcp-server/
 ├── terraform.tfvars        # プロジェクトIDなどユーザー設定
 ├── startup.sh              # VM起動時にMinecraftを自動インストール・起動
 ├── cloud-function/         # 接続人数チェック用Cloud Function
-│   ├── main.py             # Cloud Function本体
+│   ├── main.py             # Cloud Function本体 (プレイヤー数確認、VM停止、Webhook通知)
 │   └── requirements.txt    # Cloud Function用Python依存
+├── discord-bot/            # Discord Bot (サーバー管理用)
+│   ├── bot.py              # Discord Bot本体 (Flask Webhook含む)
+│   ├── requirements.txt    # Discord Bot用Python依存
+│   ├── Dockerfile          # Discord Botコンテナ化用
+│   └── config.sample.py    # ローカル実行時の設定ファイルテンプレート
 └── README.md               # このガイド
 ```
 
 ---
 
-## 🖥️ 推奨インスタンスサイズ
-
-| プレイヤー数 | インスタンスサイズ | 月額目安（常時稼働）  | 備考                       |
-| ------------ | ------------------ | --------------------- | -------------------------- |
-| 1〜3 人      | `e2-small`         | 約 1,600 円〜2,000 円 | CPU×2、RAM 2GB。安価で安定 |
-| 無料枠活用   | `e2-micro`         | 0 円（条件付き）      | 米リージョン限定、東京不可 |
-
-- 無接続時に**自動でインスタンスを停止**することで、実際の稼働コストを 1/3 以下にできます。
-
----
-
 ## 🔧 使用技術
 
-- Google Compute Engine（VM）
-- Terraform（インフラ管理）
-- Cloud Function（接続人数チェック）
-- Cloud Scheduler（自動トリガー）
-- Cloud Storage（任意：バックアップ保存用）
+- **GCP:**
+  - Google Compute Engine (GCE): Minecraft サーバー実行用 VM
+  - Cloud Functions: プレイヤー数監視、VM 自動停止、Webhook トリガー
+  - Cloud Scheduler: Cloud Function の定期実行
+  - Cloud Storage: Cloud Function のソースコード保存 (任意: バックアップ保存用)
+  - Artifact Registry: Discord Bot の Docker イメージ格納
+  - Cloud Build: Docker イメージのビルドとプッシュ
+  - Cloud Run: Discord Bot のホスティング
+  - IAM (Identity and Access Management): 各サービスへの権限付与
+- **Minecraft:**
+  - Minecraft Java Edition Server
+- **Discord Bot:**
+  - Python
+  - discord.py: Discord API ラッパー
+  - Flask: Webhook 受信用マイクロフレームワーク
+  - google-api-python-client: GCP API 操作
+- **Infrastructure as Code:**
+  - Terraform: GCP リソース全体のプロビジョニングと管理
 
 ---
 
-## ⚙️ 初期設定手順
+## 必要なもの
 
-1. **terraform.tfvars を編集**
-
-   ```hcl
-   project_id = "your-gcp-project-id"
-   ```
-
-2. **Terraform 適用**
-
-   ```bash
-   terraform init
-   terraform apply
-   ```
-
-3. **Cloud Function のデプロイ**
-
-   ```bash
-   cd cloud-function
-   gcloud functions deploy check_players \
-     --runtime python310 \
-     --trigger-http \
-     --entry-point main \
-     --set-env-vars MC_SERVER_IP=XXX.XXX.XXX.XXX,GCE_ZONE=asia-northeast1-b,GCE_INSTANCE_NAME=minecraft-server
-   ```
-
-4. **Cloud Scheduler 登録（例：5 分おき）**
-   ```bash
-   gcloud scheduler jobs create http minecraft-check \
-     --schedule "*/5 * * * *" \
-     --uri https://REGION-PROJECT.cloudfunctions.net/check_players \
-     --http-method GET
-   ```
+- GCP プロジェクト
+- 課金が有効になっている GCP アカウント
+- [Google Cloud SDK (gcloud CLI)](https://cloud.google.com/sdk/docs/install) がインストール・認証済みであること
+- [Terraform](https://developer.hashicorp.com/terraform/install) (推奨: 1.0 以上)
+- Git
+- Discord アカウントと、Bot を作成・招待する権限のあるサーバー
+- Discord Bot トークン
+- Discord 通知用チャンネル ID
 
 ---
 
-## 💰 コスト最適化のヒント
+## 1. GCP API の有効化
 
-- 無接続時に VM 自動停止
-- 静的 IP を使わず、動的 IP で起動時のみ払い出し
-- ディスクは 20GB 程度で十分、スナップショットバックアップ推奨
-- Cloud Scheduler, Cloud Function は無料枠内で動作可能
+Terraform がリソースを作成するために、以下の GCP API が有効になっている必要があります。
+Terraform の `google_project_service` リソースにより、`apply` 時に自動で有効化が試みられますが、事前に手動で有効化しておくと確実です。
+
+下記リンクから各 API のページを開き、右上の「プロジェクト選択」でご自身のプロジェクトを選択し、「有効にする」ボタンを押してください。
+
+- [Compute Engine API](https://console.developers.google.com/apis/api/compute.googleapis.com/overview)
+- [Cloud Functions API](https://console.developers.google.com/apis/api/cloudfunctions.googleapis.com/overview)
+- [Cloud Scheduler API](https://console.developers.google.com/apis/api/cloudscheduler.googleapis.com/overview)
+- [Cloud Storage API](https://console.developers.google.com/apis/api/storage.googleapis.com/overview)
+- [Artifact Registry API](https://console.developers.google.com/apis/api/artifactregistry.googleapis.com/overview)
+- [Cloud Build API](https://console.developers.google.com/apis/api/cloudbuild.googleapis.com/overview)
+- [Cloud Run API](https://console.developers.google.com/apis/api/run.googleapis.com/overview)
+- [Identity and Access Management (IAM) API](https://console.developers.google.com/apis/api/iam.googleapis.com/overview)
+- [Cloud Resource Manager API](https://console.developers.google.com/apis/api/cloudresourcemanager.googleapis.com/overview) (通常デフォルトで有効)
 
 ---
 
-## 🧩 カスタマイズポイント
+## 2. サービスアカウントキーの準備 (ローカル実行時、任意)
 
-- Minecraft のバージョン固定：`startup.sh`内の jar ダウンロードリンクを変更
-- メモリ割り当て：`-Xmx1024M` などを適宜調整
-- RCON による人数取得を別手段に変更したい場合は `main.py` を改修
+Terraform をローカルマシンから実行する場合、GCP への認証が必要です。
+推奨は `gcloud auth application-default login` コマンドを使用する方法ですが、サービスアカウントキーを使用することも可能です。
+
+サービスアカウントキーを使用する場合:
+GCP コンソールでサービスアカウントを作成し、JSON キーをダウンロードします。
+例: `C:\\Users\\your_user\\gcp-key.json` (Windows) または `/home/your_user/gcp-key.json` (Linux/macOS)
+
+---
+
+## 3. Discord Bot の準備
+
+1.  **Discord Developer Portal で Bot を作成**
+
+    - [Discord Developer Portal](https://discord.com/developers/applications) にアクセスし、新しい Application を作成します。
+    - 作成した Application の「Bot」タブで「Add Bot」をクリックして Bot ユーザーを作成します。
+    - 「TOKEN」セクションで「Reset Token」または「Copy」をクリックし、Bot トークンを控えておきます。**このトークンは絶対に公開しないでください。**
+    - 「Privileged Gateway Intents」の項目で、「SERVER MEMBERS INTENT」と「MESSAGE CONTENT INTENT」を有効にしてください（Bot の機能に応じて必要であれば）。現状の Bot では必須ではありませんが、将来的な拡張のために有効にしておいても良いでしょう。
+
+2.  **Bot を Discord サーバーに招待**
+
+    - Application の「OAuth2」→「URL Generator」タブを開きます。
+    - 「SCOPES」で `bot` と `applications.commands` を選択します。
+    - 「BOT PERMISSIONS」で、Bot に必要な権限（例: `Send Messages`, `Read Message History`, `Use Slash Commands` など）を選択します。
+    - 生成された URL にアクセスし、Bot を追加したいサーバーを選択して認証します。
+
+3.  **通知用チャンネル ID の取得**
+    - Discord のユーザー設定で「詳細設定」を開き、「開発者モード」をオンにします。
+    - Bot に通知させたいチャンネルを右クリックし、「ID をコピー」を選択してチャンネル ID を控えます。
+
+---
+
+## 4. 変数ファイルの編集
+
+プロジェクトルートに `terraform.tfvars` というファイルを作成（または既存のファイルを編集）し、以下の情報を記述します。
+
+```hcl
+# terraform.tfvars
+
+project_id          = "your-gcp-project-id"  # あなたのGCPプロジェクトID
+region              = "asia-northeast1"      # 例: 東京リージョン
+zone                = "asia-northeast1-b"    # 例: 東京リージョンbゾーン
+
+# Discord Bot 設定 (重要: これらの値は機密情報として扱ってください)
+discord_bot_token   = "YOUR_DISCORD_BOT_TOKEN" # 手順3で取得したDiscord Botトークン
+discord_channel_id  = "YOUR_DISCORD_CHANNEL_ID" # 手順3で取得した通知用チャンネルID (数値ではなく文字列で囲む)
+
+# (任意) Cloud Build と Artifact Registry を使用するリージョン
+# デフォルトは "us-central1" です。特定のリージョンでクォータ制限がある場合に指定します。
+# cloud_build_region  = "us-central1"
+```
+
+**注意:** `terraform.tfvars` ファイルは `.gitignore` に記載されているため、Git リポジトリにはコミットされません。これにより、機密情報が誤って公開されるのを防ぎます。
+
+---
+
+## 5. Terraform の実行
+
+1.  **GCP 認証**
+
+    - **推奨:** `gcloud auth application-default login` を実行し、ブラウザ経由で認証します。
+      ```bash
+      gcloud auth application-default login
+      ```
+    - サービスアカウントキーを使用する場合 (非推奨): 環境変数 `GOOGLE_APPLICATION_CREDENTIALS` にキーファイルのパスを設定します。
+      ```bash
+      # Linux / macOS
+      export GOOGLE_APPLICATION_CREDENTIALS="/path/to/your/gcp-key.json"
+      # Windows (Git Bashなど)
+      export GOOGLE_APPLICATION_CREDENTIALS="/c/Users/your_user/gcp-key.json"
+      ```
+
+2.  **Terraform 初期化**
+    プロジェクトルートディレクトリで以下のコマンドを実行します。
+
+    ```bash
+    terraform init
+    ```
+
+3.  **(任意) プラン作成**
+    どのようなリソースが作成・変更されるかを確認します。
+
+    ```bash
+    terraform plan
+    ```
+
+4.  **適用**
+    リソースを実際に GCP 上に作成します。途中で確認を求められるので `yes` と入力します。
+    ```bash
+    terraform apply
+    ```
+    `terraform apply` が完了すると、Cloud Function や Cloud Run サービスがデプロイされ、Discord Bot が起動可能な状態になります。
+
+---
+
+## 6. Discord Bot の動作確認
+
+`terraform apply` が成功すると、Discord Bot (Cloud Run) と Cloud Function がデプロイされます。
+
+- Cloud Function (`check-players`) は 5 分ごとに Minecraft サーバーのプレイヤー数を確認します。
+- プレイヤーが 0 人になると、Cloud Function は VM を停止し、Discord Bot の Webhook URL を呼び出します。
+- Webhook を受信した Discord Bot は、指定されたチャンネルに「サーバーが停止しました」というメッセージと「サーバーを起動」ボタンを送信します。
+
+**利用可能なスラッシュコマンド:**
+
+- `/mc_status`: Minecraft サーバーの現在の状態（RUNNING, TERMINATED など）を表示します。
+- `/mc_start`: Minecraft サーバーを起動します。成功すると IP アドレスを通知します。
+
+これらのコマンドを Discord の指定チャンネルで実行して、Bot が正しく動作することを確認してください。
+
+---
+
+## 7. 結果の確認 (Terraform Output)
+
+Terraform によって作成されたリソースの情報（Minecraft サーバーの IP アドレス、Cloud Function の URL など）は、`terraform apply` の最後に出力されます。
+再度確認したい場合は、以下のコマンドで出力値を確認できます。
+
+```bash
+terraform output
+```
+
+---
+
+## 8. 注意事項
+
+- **API の有効化:** GCP API の有効化は、Terraform が試みるものの、反映に数分かかる場合や、手動での確認が必要な場合があります。エラーが発生した場合は、API が正しく有効になっているか確認してください。
+- **Cloud Function のソースコード:** `cloud-function/` ディレクトリの内容は `terraform apply` 時に自動的に zip 化され、Cloud Storage にアップロードされます。
+- **Discord Bot のイメージ:** `discord-bot/` ディレクトリの内容 (Dockerfile 含む) は `terraform apply` 時に Cloud Build によって Docker イメージとしてビルドされ、Artifact Registry にプッシュされた後、Cloud Run サービスにデプロイされます。
+- **機密情報:** `terraform.tfvars` やサービスアカウントキー (`*.json`) は `.gitignore` によって Git の管理対象外となっています。これらのファイルは絶対にリポジトリにコミットしないでください。
+- **コスト:** この構成では、VM が無操作時に自動停止する仕組みになっていますが、Cloud Run やその他のサービスにも微量のコストが発生する可能性があります。GCP の無料枠や料金体系を確認してください。Cloud Build は一定の無料枠がありますが、頻繁にビルドすると料金が発生します。
+
+---
+
+## 9. Minecraft サーバー関連
+
+### ⚙️ 初期設定手順 (旧 README より参考、Terraform で自動化済み箇所も含む)
+
+以前の README に記載されていた手動での Cloud Function デプロイや Cloud Scheduler 登録の手順は、現在 Terraform によって自動化されています。
+`startup.sh` が VM 起動時に Minecraft サーバーをセットアップします。
+
+### 🧩 カスタマイズポイント
+
+- **Minecraft のバージョン固定:** `startup.sh`内の `MINECRAFT_VERSION` 変数を変更。
+- **VM のメモリ割り当て:** `startup.sh` 内の Java 起動コマンドの `-Xmx` `-Xms` パラメータや、`variables.tf` の `machine_type` を適宜調整。
+- **Cloud Function のロジック変更:** `cloud-function/main.py` を改修。
+- **Discord Bot の機能拡張:** `discord-bot/bot.py` を改修。
 
 ---
 
@@ -236,19 +280,20 @@ minecraft-gcp-server/
 
 1. [Google Cloud Console](https://console.cloud.google.com/) にアクセス
 2. 左メニュー「Compute Engine」→「VM インスタンス」
-3. 対象 VM の「SSH」ボタンをクリック
+3. 対象 VM (`minecraft-server` など) の「SSH」ボタンをクリック
 
 #### B. ローカル PC から gcloud コマンドで接続
 
 - 事前に [gcloud CLI](https://cloud.google.com/sdk/docs/install) をインストールし、認証しておく
-- コマンド例：
+- コマンド例 (プロジェクト ID やゾーンは適宜置き換えてください):
   ```bash
-  gcloud compute ssh minecraft-server --zone=asia-northeast1-b --project=minecfaft-gcp-server
+  gcloud compute ssh YOUR_INSTANCE_NAME --zone=YOUR_ZONE --project=YOUR_PROJECT_ID
+  # 例: gcloud compute ssh minecraft-server --zone=asia-northeast1-b --project=minecfaft-gcp-server
   ```
 
 ---
 
-### 2. Minecraft サーバーの状態確認
+### 2. Minecraft サーバーの状態確認 (VM 接続後)
 
 #### A. サーバープロセスの確認
 
@@ -256,7 +301,7 @@ minecraft-gcp-server/
 ps aux | grep java
 ```
 
-- `java -jar server.jar` のプロセスが表示されていればサーバーは起動中
+- `java -jar server.jar` (または `minecraft_server.jar`) のプロセスが表示されていればサーバーは起動中
 
 #### B. サーバーファイルの確認
 
@@ -264,7 +309,7 @@ ps aux | grep java
 ls -l /opt/minecraft/
 ```
 
-- `server.jar`、`eula.txt`、`server.properties` などが存在するか確認
+- `server.jar` (または `minecraft_server.X.X.X.jar`)、`eula.txt`、`server.properties` などが存在するか確認
 
 #### C. EULA・設定ファイルの内容確認
 
@@ -273,55 +318,73 @@ cat /opt/minecraft/eula.txt
 cat /opt/minecraft/server.properties
 ```
 
-- `eula=true`、`enable-query=true` などが正しく設定されているか
+- `eula=true` (`startup.sh`で自動同意)、`enable-query=true` (`server.properties`で設定推奨) などが正しく設定されているか
 
-#### D. サーバーログの確認（起動エラー時）
+#### D. サーバーログの確認（起動エラー時など）
 
-- サーバー起動時にエラーが出る場合、`/opt/minecraft/` 内に `logs/` ディレクトリや `latest.log` があれば内容を確認
+- サーバーログは `/opt/minecraft/logs/latest.log` にあります。
 - 例：
   ```bash
   cat /opt/minecraft/logs/latest.log
+  # tail -f /opt/minecraft/logs/latest.log (リアルタイム表示)
   ```
 
 ---
 
-### 3. サーバーの手動起動・再起動
+### 3. サーバーの手動起動・再起動 (VM 接続後、通常は不要)
 
-#### A. 手動で起動
+`startup.sh` により、VM 起動時に Minecraft サーバーは自動的に `screen` セッション内で起動されます。
+手動での操作が必要な場合は以下を参考にしてください。
+
+#### A. screen セッションへのアタッチ
+
+```bash
+sudo screen -r minecraft
+```
+
+- `Ctrl+A` を押してから `D` を押すとデタッチできます。
+
+#### B. 手動で起動 (screen を使わない場合、フォアグラウンド実行)
 
 ```bash
 cd /opt/minecraft
-sudo java -Xmx1536M -Xms1536M -jar server.jar nogui
+sudo java -Xmx1536M -Xms1536M -jar server.jar nogui # メモリ等はstartup.shに合わせる
 ```
-
-- エラーが出る場合はその内容を確認
-
-#### B. screen でバックグラウンド起動
-
-```bash
-cd /opt/minecraft
-sudo screen -dmS minecraft java -Xmx1536M -Xms1536M -jar server.jar nogui
-```
-
-- `screen -ls` でセッション確認、`screen -r minecraft` でアタッチ
 
 ---
 
 ### 4. よくあるトラブルと対処
 
-- **プロセスがいない/すぐ落ちる**：Java バージョンやメモリ不足、JAR 破損を疑う
-- **ファイルが 0 バイト**：ダウンロード URL ミスやネットワークエラー
-- **EULA 未同意**：`eula.txt` の内容を確認
-- **ポートが開いていない**：ファイアウォール設定を再確認
-- **Query 失敗**：`enable-query=true`、UDP 25565 開放、サーバー起動直後は数分待つ
+- **Discord Bot が反応しない:**
+  - Cloud Run のログを確認 (GCP コンソール > Cloud Run > minecraft-discord-bot > ログ)。
+  - `terraform.tfvars` の `discord_bot_token` や `discord_channel_id` が正しいか確認。
+  - Bot が Discord サーバーに正しく招待され、必要な権限を持っているか確認。
+  - Discord Developer Portal で Bot のインテント設定を確認。
+- **VM が起動しない/Minecraft サーバーが起動しない:**
+  - GCP コンソールの VM インスタンスのシリアルポートログを確認。
+  - `startup.sh` の実行エラーがないか確認 (上記シリアルポートログ内)。
+  - VM に SSH 接続し、Minecraft サーバーのログ (`/opt/minecraft/logs/latest.log`) を確認。
+  - Java のバージョン、メモリ不足、JAR ファイルの破損などを疑う。
+- **Cloud Function が動作しない/エラーになる:**
+  - GCP コンソールの Cloud Functions のログを確認。
+  - 環境変数 (`GCE_ZONE`, `GCE_INSTANCE_NAME`, `DISCORD_BOT_WEBHOOK_URL` など) が正しく設定されているか確認。
+  - Cloud Function のサービスアカウントに必要な権限 (Compute Instance Admin など) が付与されているか確認。
+- **Query 失敗 (Cloud Function ログ):**
+  - Minecraft サーバーの `server.properties` で `enable-query=true` และ `query.port=25565` (デフォルト) が設定されているか確認。
+  - GCP ファイアウォールで UDP ポート `25565` が開放されているか確認 (Terraform で設定済みのはず)。
+  - サーバー起動直後は Query に応答するまで少し時間がかかる場合があります。
 
 ---
 
-### 5. 参考コマンドまとめ
+### 5. 参考コマンドまとめ (VM 接続後)
 
 ```bash
 # サーバープロセス確認
 ps aux | grep java
+
+# screenセッション確認・アタッチ
+sudo screen -ls
+sudo screen -r minecraft
 
 # サーバーファイル確認
 ls -l /opt/minecraft/
@@ -332,20 +395,16 @@ cat /opt/minecraft/server.properties
 
 # サーバーログ確認
 cat /opt/minecraft/logs/latest.log
+tail -f /opt/minecraft/logs/latest.log
 
-# 手動起動
-cd /opt/minecraft
-sudo java -Xmx1536M -Xms1536M -jar server.jar nogui
-
-# screenでバックグラウンド起動
-sudo screen -dmS minecraft java -Xmx1536M -Xms1536M -jar server.jar nogui
-screen -ls
-screen -r minecraft
+# (参考) 手動起動 (通常はstartup.shによる自動起動)
+# cd /opt/minecraft
+# sudo java -XmxYOUR_MEM -XmsYOUR_MEM -jar server.jar nogui
 ```
 
 ---
 
-何か問題が発生した場合は、上記のコマンドやログを確認し、エラー内容をもとに対処してください。
-分からない場合は、エラー内容を添えてご相談ください！
+何か問題が発生した場合は、各サービスのログ（Cloud Run, Cloud Functions, VM シリアルポート, Minecraft サーバーログ）を確認し、エラー内容をもとに対処してください。
+それでも解決しない場合は、エラーメッセージを添えて Issue 等でご相談ください。
 
 ---
