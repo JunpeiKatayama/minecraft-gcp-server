@@ -1,0 +1,20 @@
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+*.tfvars.backup
+*.tfplan
+function-source-generated.zip # Terraformが自動生成するzipファイル
+
+# 機密情報
+*.tfvars
+*.json
+!example.tfvars
+!example.json
+
+# OS/エディタ固有
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/ 
