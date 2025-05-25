@@ -5,7 +5,8 @@
 crash.log
 *.tfvars.backup
 *.tfplan
-function-source-generated.zip # Terraformが自動生成するzipファイル
+# function-source-generated.zip # Terraformが自動生成するzipファイル (より一般的なパターンに置き換え)
+*-generated.zip # Terraformが archive_file で自動生成する可能性のあるzipファイル
 
 # 機密情報
 *.tfvars
