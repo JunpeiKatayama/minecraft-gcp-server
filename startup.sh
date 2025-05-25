@@ -25,4 +25,4 @@ grep -q '^enable-query=' server.properties 2>/dev/null && sed -i 's/^enable-quer
 grep -q '^query.port=' server.properties 2>/dev/null || echo 'query.port=25565' >> server.properties
 
 # サーバー起動（screenでデタッチ）
-screen -dmS minecraft java -Xmx1536M -Xms1536M -jar server.jar nogui 
+screen -dmS minecraft java -Xmx7168M -Xms7168M -XX:+UseG1GC -jar server.jar nogui # e2-standard-2 (8GB RAM) 向けに調整、Minecraftへ7GB割り当て、G1GC有効化 

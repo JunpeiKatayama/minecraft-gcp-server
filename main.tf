@@ -21,6 +21,7 @@ resource "google_compute_instance" "minecraft" {
     initialize_params {
       image = "debian-cloud/debian-12"
       size  = var.disk_size_gb
+      type  = "pd-ssd"
     }
   }
 
