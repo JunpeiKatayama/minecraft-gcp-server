@@ -5,6 +5,8 @@
 
 - Minecraft サーバーの自動構築 (Debian 12, Java 21, 指定バージョン Minecraft Server)
 - サーバー無接続時の GCE インスタンス自動停止によるコスト最適化
+- VM 停止時におけるサーバーセーブデータの自動バックアップ (ディスクスナップショット作成)
+- 定期的なバックアップのローテーション (古いスナップショットの自動削除)
 - Discord Bot (Python, Cloud Run) による以下の操作:
   - サーバー停止時の Discord 通知（「サーバー起動」ボタン付き）
   - Discord からの VM 起動と IP アドレス通知
@@ -20,11 +22,13 @@
 - **Google Compute Engine (GCE):**
   - VM インスタンス (`e2-small` デフォルト): サーバー起動中のみ課金されます。`asia-northeast1` (東京) で `e2-small` を常時稼働させた場合、月額約 $15〜$20 程度です (2024 年 1 月時点)。自動停止機能により、実際のプレイ時間に応じた料金になります。
   - ブートディスク (20GB デフォルト): 低容量であれば無料枠の範囲または月額数ドル未満。
+  - ディスクスナップショット: Minecraft サーバー停止時に自動作成されます。差分保存のため効率的ですが、保持数やデータ量に応じてストレージコスト (アジア太平洋リージョンで約$0.026/GB/月) が発生します。古いスナップショットは自動的に削除されます。
   - 外部 IP アドレス: VM 起動中のみエフェメラル IP アドレスを使用するため、通常は追加料金なし。静的 IP アドレスを予約すると別途料金が発生します。
 - **Cloud Functions:**
-  - 無料枠が比較的大きく (月間 200 万リクエスト等)、このプロジェクトの用途 (5 分ごとの実行) であれば通常無料枠内に収まる見込みです。
+  - `check-players` (プレイヤー数監視・VM 停止・スナップショット作成): 無料枠が比較的大きく、このプロジェクトの用途であれば通常無料枠内に収まる見込みです。
+  - `delete-old-snapshots` (スナップショット削除): こちらも軽量な処理のため、無料枠内に収まる見込みです。
 - **Cloud Scheduler:**
-  - 無料枠 (月間 3 ジョブまで無料) の範囲内で動作します。
+  - `check-players` 用と `delete-old-snapshots` 用の 2 つのジョブが無料枠 (月間 3 ジョブまで無料) の範囲内で動作します。
 - **Cloud Storage:**
   - Cloud Function のソースコード (zip ファイル) の保存に使用します。容量は非常に小さいため、コストはほぼ発生しません。
 - **Artifact Registry:**
@@ -32,14 +36,15 @@
 - **Cloud Build:**
   - 無料枠 (1 日あたり 120 ビルド分無料など) があります。Bot のコード更新頻度が低ければ無料枠内に収まる可能性があります。
 - **Cloud Run:**
-  - Discord Bot のホスティングに使用します。常時 1 インスタンスを起動せず、リクエストに応じてスケールする設定 (min_instance_count = 0) のため、無料枠 (CPU、メモリ、リクエスト数など) が大きく、この Bot の用途であれば無料枠内に収まるか、月額数ドル未満で運用できる可能性が高いです。
+  - Discord Bot のホスティングに使用します。**応答性向上のため最小インスタンス数が `1` に設定されています。** これにより、無料枠を超える可能性があり、月額数ドル程度のコストが発生する場合があります。 (マシンタイプやリージョンによる)
 - **ネットワークトラフィック:**
   - 主に Minecraft サーバーのプレイによる下りトラフィックが課金対象となりますが、小規模サーバーであれば大きな金額にはなりにくいです。
 
 **コスト削減のポイント:**
 
 - VM の自動停止機能が最も効果的です。
-- 不要なリソース (古いスナップショット、未使用の静的 IP など) を定期的に確認・削除する。
+- スナップショットの保持数 (`snapshot_retention_count` 変数) を調整する。
+- 不要なリソース (古いスナップショットを手動で更に削除するなど、未使用の静的 IP など) を定期的に確認・削除する。
 - GCP の料金計算ツールや請求ダッシュボードでコストを監視する。
 
 **あくまで現時点での一般的な試算であり、詳細な見積もりは GCP の料金計算ツールをご利用ください。**
@@ -54,8 +59,11 @@ minecraft-gcp-server/
 ├── variables.tf            # Terraform変数定義
 ├── terraform.tfvars        # プロジェクトIDなどユーザー設定
 ├── startup.sh              # VM起動時にMinecraftを自動インストール・起動
-├── cloud-function/         # 接続人数チェック用Cloud Function
-│   ├── main.py             # Cloud Function本体 (プレイヤー数確認、VM停止、Webhook通知)
+├── cloud-function/         # 接続人数チェック・VM停止・スナップショット作成用Cloud Function
+│   ├── main.py             # Cloud Function本体
+│   └── requirements.txt    # Cloud Function用Python依存
+├── cloud-function-delete-snapshots/ # 古いスナップショット削除用Cloud Function
+│   ├── main.py             # Cloud Function本体
 │   └── requirements.txt    # Cloud Function用Python依存
 ├── discord-bot/            # Discord Bot (サーバー管理用)
 │   ├── bot.py              # Discord Bot本体 (Flask Webhook含む)
@@ -71,12 +79,14 @@ minecraft-gcp-server/
 
 - **GCP:**
   - Google Compute Engine (GCE): Minecraft サーバー実行用 VM
-  - Cloud Functions: プレイヤー数監視、VM 自動停止、Webhook トリガー
+  - Cloud Functions:
+    - プレイヤー数監視、VM 自動停止、スナップショット作成
+    - 古いスナップショットの定期的な削除
   - Cloud Scheduler: Cloud Function の定期実行
   - Cloud Storage: Cloud Function のソースコード保存 (任意: バックアップ保存用)
   - Artifact Registry: Discord Bot の Docker イメージ格納
   - Cloud Build: Docker イメージのビルドとプッシュ
-  - Cloud Run: Discord Bot のホスティング
+  - Cloud Run: Discord Bot のホスティング (最小インスタンス 1 で稼働)
   - IAM (Identity and Access Management): 各サービスへの権限付与
 - **Minecraft:**
   - Minecraft Java Edition Server
@@ -173,6 +183,11 @@ discord_channel_id  = "YOUR_DISCORD_CHANNEL_ID" # 手順3で取得した通知�
 # (任意) Cloud Build と Artifact Registry を使用するリージョン
 # デフォルトは "us-central1" です。特定のリージョンでクォータ制限がある場合に指定します。
 # cloud_build_region  = "us-central1"
+
+# (任意) スナップショット保持数
+# Minecraftサーバー停止時に作成されるディスクスナップショットの最大保持数です。
+# これを超える古いスナップショットは自動的に削除されます。
+# snapshot_retention_count = 7 # デフォルトは7
 ```
 
 **注意:** `terraform.tfvars` ファイルは `.gitignore` に記載されているため、Git リポジトリにはコミットされません。これにより、機密情報が誤って公開されるのを防ぎます。
@@ -218,20 +233,26 @@ discord_channel_id  = "YOUR_DISCORD_CHANNEL_ID" # 手順3で取得した通知�
 
 ---
 
-## 6. Discord Bot の動作確認
+## 6. 主な機能と動作の確認
 
-`terraform apply` が成功すると、Discord Bot (Cloud Run) と Cloud Function がデプロイされます。
+`terraform apply` が成功すると、以下の主要な自動化機能が動作を開始します。
 
-- Cloud Function (`check-players`) は 5 分ごとに Minecraft サーバーのプレイヤー数を確認します。
-- プレイヤーが 0 人になると、Cloud Function は VM を停止し、Discord Bot の Webhook URL を呼び出します。
-- Webhook を受信した Discord Bot は、指定されたチャンネルに「サーバーが停止しました」というメッセージと「サーバーを起動」ボタンを送信します。
+- **Minecraft サーバー自動停止とバックアップ:**
+  - Cloud Function (`check-players`) が 5 分ごとに Minecraft サーバーのプレイヤー数を確認します。
+  - プレイヤーが 0 人になると、Cloud Function はまずサーバーのディスクスナップショットを作成し、その後 VM を停止します。
+  - VM 停止後、Discord Bot の Webhook URL を呼び出します。
+- **Discord Bot 通知:**
+  - Webhook を受信した Discord Bot は、指定されたチャンネルに「サーバーが停止しました」というメッセージと「サーバーを起動」ボタンを送信します。
+- **スナップショット自動ローテーション:**
+  - 別の Cloud Function (`delete-old-snapshots`) が毎日定刻 (デフォルト午前 3 時 JST) に実行されます。
+  - この Function は、`check-players` によって作成されたスナップショットのうち、設定された保持数 (`snapshot_retention_count`) を超える古いものを自動的に削除します。
 
-**利用可能なスラッシュコマンド:**
+**利用可能な Discord スラッシュコマンド:**
 
 - `/mc_status`: Minecraft サーバーの現在の状態（RUNNING, TERMINATED など）を表示します。
 - `/mc_start`: Minecraft サーバーを起動します。成功すると IP アドレスを通知します。
 
-これらのコマンドを Discord の指定チャンネルで実行して、Bot が正しく動作することを確認してください。
+これらの動作やコマンドを Discord の指定チャンネルで実行して、システム全体が正しく機能することを確認してください。
 
 ---
 
@@ -249,10 +270,13 @@ terraform output
 ## 8. 注意事項
 
 - **API の有効化:** GCP API の有効化は、Terraform が試みるものの、反映に数分かかる場合や、手動での確認が必要な場合があります。エラーが発生した場合は、API が正しく有効になっているか確認してください。
-- **Cloud Function のソースコード:** `cloud-function/` ディレクトリの内容は `terraform apply` 時に自動的に zip 化され、Cloud Storage にアップロードされます。
+- **Cloud Function のソースコード:** `cloud-function/` および `cloud-function-delete-snapshots/` ディレクトリの内容は `terraform apply` 時に自動的に zip 化され、Cloud Storage にアップロードされます。
 - **Discord Bot のイメージ:** `discord-bot/` ディレクトリの内容 (Dockerfile 含む) は `terraform apply` 時に Cloud Build によって Docker イメージとしてビルドされ、Artifact Registry にプッシュされた後、Cloud Run サービスにデプロイされます。
 - **機密情報:** `terraform.tfvars` やサービスアカウントキー (`*.json`) は `.gitignore` によって Git の管理対象外となっています。これらのファイルは絶対にリポジトリにコミットしないでください。
-- **コスト:** この構成では、VM が無操作時に自動停止する仕組みになっていますが、Cloud Run やその他のサービスにも微量のコストが発生する可能性があります。GCP の無料枠や料金体系を確認してください。Cloud Build は一定の無料枠がありますが、頻繁にビルドすると料金が発生します。
+- **コスト:**
+  - この構成では、VM が無操作時に自動停止し、スナップショットもローテーションされるためコスト最適化が図られていますが、Cloud Run (最小インスタンス 1)、スナップショットストレージ、その他のサービスにも利用状況に応じたコストが発生します。
+  - 詳細は「💰 予想コスト」セクションを参照し、GCP の無料枠や料金体系を確認してください。
+  - Cloud Build は一定の無料枠がありますが、頻繁にビルドすると料金が発生します。
 
 ---
 
@@ -267,8 +291,9 @@ terraform output
 
 - **Minecraft のバージョン固定:** `startup.sh`内の `MINECRAFT_VERSION` 変数を変更。
 - **VM のメモリ割り当て:** `startup.sh` 内の Java 起動コマンドの `-Xmx` `-Xms` パラメータや、`variables.tf` の `machine_type` を適宜調整。
-- **Cloud Function のロジック変更:** `cloud-function/main.py` を改修。
+- **Cloud Function のロジック変更:** `cloud-function/main.py` や `cloud-function-delete-snapshots/main.py` を改修。
 - **Discord Bot の機能拡張:** `discord-bot/bot.py` を改修。
+- **スナップショット保持数の変更:** `terraform.tfvars` で `snapshot_retention_count` の値を変更するか、`variables.tf` のデフォルト値を変更します。
 
 ---
 
@@ -356,7 +381,7 @@ sudo java -Xmx1536M -Xms1536M -jar server.jar nogui # メモリ等はstartup.sh�
 ### 4. よくあるトラブルと対処
 
 - **Discord Bot が反応しない:**
-  - Cloud Run のログを確認 (GCP コンソール > Cloud Run > minecraft-discord-bot > ログ)。
+  - Cloud Run のログを確認 (GCP コンソール > Cloud Run > `minecraft-discord-bot` > ログ)。
   - `terraform.tfvars` の `discord_bot_token` や `discord_channel_id` が正しいか確認。
   - Bot が Discord サーバーに正しく招待され、必要な権限を持っているか確認。
   - Discord Developer Portal で Bot のインテント設定を確認。
@@ -365,14 +390,22 @@ sudo java -Xmx1536M -Xms1536M -jar server.jar nogui # メモリ等はstartup.sh�
   - `startup.sh` の実行エラーがないか確認 (上記シリアルポートログ内)。
   - VM に SSH 接続し、Minecraft サーバーのログ (`/opt/minecraft/logs/latest.log`) を確認。
   - Java のバージョン、メモリ不足、JAR ファイルの破損などを疑う。
-- **Cloud Function が動作しない/エラーになる:**
-  - GCP コンソールの Cloud Functions のログを確認。
+- **Cloud Function (`check-players`) が動作しない/エラーになる:**
+  - GCP コンソールの Cloud Functions のログ (`check-players`) を確認。
   - 環境変数 (`GCE_ZONE`, `GCE_INSTANCE_NAME`, `DISCORD_BOT_WEBHOOK_URL` など) が正しく設定されているか確認。
-  - Cloud Function のサービスアカウントに必要な権限 (Compute Instance Admin など) が付与されているか確認。
-- **Query 失敗 (Cloud Function ログ):**
+  - Cloud Function のサービスアカウントに必要な権限 (Compute Instance Admin, Compute Storage Admin など) が付与されているか確認。
+- **Cloud Function (`delete-old-snapshots`) が動作しない/エラーになる:**
+  - GCP コンソールの Cloud Functions のログ (`delete-old-snapshots`) を確認。
+  - 環境変数 (`GCP_PROJECT`, `SNAPSHOT_PREFIX`, `SNAPSHOT_RETENTION_COUNT`) が正しく設定されているか確認。
+  - Cloud Function のサービスアカウントに必要な権限 (Compute Storage Admin など。スナップショットのリスト取得・削除) が付与されているか確認。
+- **Query 失敗 (Cloud Function `check-players` ログ):**
   - Minecraft サーバーの `server.properties` で `enable-query=true` และ `query.port=25565` (デフォルト) が設定されているか確認。
   - GCP ファイアウォールで UDP ポート `25565` が開放されているか確認 (Terraform で設定済みのはず)。
   - サーバー起動直後は Query に応答するまで少し時間がかかる場合があります。
+- **スナップショットが作成されない/削除されない:**
+  - Cloud Function (`check-players` または `delete-old-snapshots`) のログでスナップショット関連の API 呼び出しが成功しているか、エラーが出ていないか確認。
+  - Cloud Function のサービスアカウントに適切な IAM 権限が付与されているか確認。
+  - スナップショットの命名規則やプレフィックスが Cloud Function の期待通りか確認。
 
 ---
 
