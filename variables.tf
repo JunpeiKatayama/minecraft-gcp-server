@@ -61,4 +61,10 @@ variable "cloud_build_region" {
   description = "Cloud Build と Artifact Registry を使用するGCPリージョン"
   type        = string
   default     = "us-central1" # 例としてus-central1を指定
+}
+
+variable "snapshot_retention_count" {
+  description = "保持するMinecraftサーバーのスナップショットの最大数"
+  type        = number
+  default     = 7
 } 

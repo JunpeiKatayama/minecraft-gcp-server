@@ -4,6 +4,7 @@ import struct
 from googleapiclient import discovery
 import google.auth
 import requests
+import datetime
 
 gce_zone = os.environ["GCE_ZONE"]
 gce_instance_name = os.environ["GCE_INSTANCE_NAME"]
@@ -113,6 +114,30 @@ def main(request):
         try:
             credentials, _ = google.auth.default()
             service = discovery.build('compute', 'v1', credentials=credentials)
+
+            # --- スナップショット作成処理 --- 
+            snapshot_name = f"{gce_instance_name}-snapshot-{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}"
+            print(f"VM停止前にスナップショットを作成します: {snapshot_name}", flush=True)
+            try:
+                snapshot_body = {
+                    'name': snapshot_name,
+                    'description': f'Automatic snapshot for {gce_instance_name} before shutdown on {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'
+                }
+                # VMインスタンスの最初のディスク (通常はブートディスク) を対象とする
+                # より堅牢にするには、インスタンス情報からディスク名を正確に取得する
+                # ここではインスタンス名と同じ名前のディスクを想定 (一般的なTerraform構成)
+                snapshot_op = service.disks().createSnapshot(
+                    project=project_id,
+                    zone=gce_zone, # スナップショットはゾーンディスクから作成
+                    disk=gce_instance_name, # インスタンス名と同じディスク名と仮定
+                    body=snapshot_body
+                ).execute()
+                print(f"スナップショット作成API呼び出し成功: {snapshot_op}", flush=True)
+                # スナップショット完了を待つ場合はここでポーリング処理が必要だが、今回は呼び出しのみ
+            except Exception as e_snap:
+                print(f"スナップショット作成中にエラー: {e_snap}", flush=True)
+            # --- スナップショット作成処理ここまで ---
+
             stop_op = service.instances().stop(
                 project=project_id,
                 zone=gce_zone,

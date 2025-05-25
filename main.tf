@@ -74,6 +74,13 @@ resource "google_project_iam_member" "function_compute_admin" {
   member  = "serviceAccount:${google_service_account.function_sa.email}"
 }
 
+// Cloud Function SAにディスクスナップショット作成権限を付与
+resource "google_project_iam_member" "function_compute_storage_admin" {
+  project = var.project_id
+  role    = "roles/compute.storageAdmin" # ディスクの読み書き、スナップショット作成権限など
+  member  = "serviceAccount:${google_service_account.function_sa.email}"
+}
+
 // Cloud Functionデプロイ
 resource "google_storage_bucket" "function_bucket" {
   name     = "${var.project_id}-function-bucket"
@@ -316,4 +323,71 @@ resource "google_cloud_run_v2_service_iam_member" "discord_bot_service_invoker" 
 output "discord_bot_cloud_run_service_url" {
   description = "Discord Bot (Cloud Run) Service URL"
   value       = google_cloud_run_v2_service.discord_bot_service.uri
+}
+
+// --- Snapshot Rotation Function ---
+
+data "archive_file" "delete_snapshots_function_source_zip" {
+  type        = "zip"
+  source_dir  = "${path.module}/cloud-function-delete-snapshots/"
+  output_path = "${path.module}/delete-snapshots-function-source-generated.zip"
+}
+
+resource "google_storage_bucket_object" "delete_snapshots_function_zip" {
+  name   = "delete-snapshots-function-source-${data.archive_file.delete_snapshots_function_source_zip.output_md5}.zip"
+  bucket = google_storage_bucket.function_bucket.name # 既存のバケットを共用
+  source = data.archive_file.delete_snapshots_function_source_zip.output_path
+}
+
+resource "google_cloudfunctions_function" "delete_old_snapshots" {
+  name        = "delete-old-snapshots"
+  description = "古いMinecraftサーバーのスナップショットを自動削除する"
+  runtime     = "python310" # check-players と同じランタイムを使用
+  available_memory_mb = 128 # 軽量な処理なのでメモリは最小限
+  timeout     = 300 # タイムアウトは長めに設定 (多数のスナップショット処理を考慮)
+  source_archive_bucket = google_storage_bucket.function_bucket.name
+  source_archive_object = google_storage_bucket_object.delete_snapshots_function_zip.name
+  entry_point = "delete_old_snapshots_http" # Pythonファイル内の関数名
+  trigger_http = true # Schedulerから呼び出すためHTTPトリガー
+  region = var.region
+  service_account_email = google_service_account.function_sa.email # 既存のSAを共用
+  environment_variables = {
+    GCP_PROJECT              = var.project_id
+    SNAPSHOT_PREFIX          = "${var.instance_name}-snapshot-" # check-players Functionが作成するスナップショットのプレフィックスに合わせる
+    SNAPSHOT_RETENTION_COUNT = var.snapshot_retention_count
+  }
+}
+
+// delete-old-snapshots Cloud Functionを誰でも呼び出せるようにする (Schedulerからの呼び出しのため)
+// SchedulerがSA経由で呼び出す場合はallUsersは不要になるが、HTTPトリガーのデフォルトとして設定
+// よりセキュアにするには、SchedulerのSAに明示的に起動権限を付与する
+resource "google_cloudfunctions_function_iam_member" "delete_snapshots_invoker" {
+  project        = google_cloudfunctions_function.delete_old_snapshots.project
+  region         = google_cloudfunctions_function.delete_old_snapshots.region
+  cloud_function = google_cloudfunctions_function.delete_old_snapshots.name
+  role           = "roles/cloudfunctions.invoker"
+  member         = "allUsers" # SchedulerがSAを使う場合は特定のSAに変更可能
+}
+
+// Cloud Schedulerジョブ (毎日午前3時に古いスナップショット削除を実行)
+resource "google_cloud_scheduler_job" "delete_old_snapshots_job" {
+  name             = "delete-old-minecraft-snapshots"
+  description      = "毎日古いMinecraftサーバーのスナップショットを削除"
+  schedule         = "0 3 * * *" # 毎日午前3時 (JSTを想定する場合、time_zoneもAsia/Tokyoに)
+  time_zone        = "Asia/Tokyo"
+  attempt_deadline = "320s"
+
+  http_target {
+    http_method = "GET"
+    uri         = google_cloudfunctions_function.delete_old_snapshots.https_trigger_url
+    // Schedulerが使用するサービスアカウントを指定し、OIDCトークンで認証するのが推奨
+    // ここでは簡単のため指定しないが、本番環境では設定を推奨
+    // oidc_token {
+    //   service_account_email = google_service_account.cloud_scheduler_sa.email # Scheduler用のSAを別途作成・指定
+    // }
+  }
+
+  depends_on = [
+    google_cloudfunctions_function_iam_member.delete_snapshots_invoker
+  ]
 } 
