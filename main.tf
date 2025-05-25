@@ -266,7 +266,7 @@ resource "google_cloud_run_v2_service" "discord_bot_service" {
 
   template {
     scaling {
-      min_instance_count = 0 # アイドル時に0にスケールダウン (コスト削減)
+      min_instance_count = 1 # アイドル時も1インスタンス維持 (応答性向上のため)
       max_instance_count = 1 # Botは通常1インスタンスで十分
     }
     containers {
