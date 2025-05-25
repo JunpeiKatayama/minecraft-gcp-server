@@ -17,4 +17,7 @@ function-source-generated.zip # Terraformが自動生成するzipファイル
 .DS_Store
 Thumbs.db
 .idea/
-.vscode/ 
+.vscode/
+
+# Discord Bot configuration
+discord-bot/config.py 

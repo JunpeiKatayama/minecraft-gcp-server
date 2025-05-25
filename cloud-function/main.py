@@ -3,10 +3,12 @@ import socket
 import struct
 from googleapiclient import discovery
 import google.auth
+import requests
 
 gce_zone = os.environ["GCE_ZONE"]
 gce_instance_name = os.environ["GCE_INSTANCE_NAME"]
 project_id = os.environ.get("GCP_PROJECT") or os.environ.get("GOOGLE_CLOUD_PROJECT")
+DISCORD_BOT_WEBHOOK_URL = os.environ.get("DISCORD_BOT_WEBHOOK_URL")
 
 def get_instance_external_ip(project, zone, instance_name):
     print(f"get_instance_external_ip: project={project}, zone={zone}, instance_name={instance_name}", flush=True)
@@ -95,35 +97,47 @@ def main(request):
     if not project_id:
         print("エラー: 環境変数 GCP_PROJECT が設定されていません。", flush=True)
         return "Configuration error: GCP_PROJECT not set\n", 500
-        
+
+    if not DISCORD_BOT_WEBHOOK_URL:
+        print("警告: 環境変数 DISCORD_BOT_WEBHOOK_URL が設定されていません。VM停止通知は送信されません。", flush=True)
+
     ip = get_instance_external_ip(project_id, gce_zone, gce_instance_name)
     if not ip:
-        # get_instance_external_ip内でエラーログは出力済み
-        return "No external IP found or API error\n", 500 
-        
+        return "No external IP found or API error\n", 500
+
     count = get_player_count(ip)
     print(f"最終的なプレイヤー数: {count}", flush=True)
-    
+
     if count == 0:
         print("プレイヤー数0のため、インスタンス停止処理を開始します。", flush=True)
         try:
             credentials, _ = google.auth.default()
             service = discovery.build('compute', 'v1', credentials=credentials)
-            resp = service.instances().stop(
+            stop_op = service.instances().stop(
                 project=project_id,
                 zone=gce_zone,
                 instance=gce_instance_name
             ).execute()
-            print(f"インスタンス停止API呼び出し成功: {resp}", flush=True)
+            print(f"インスタンス停止API呼び出し成功: {stop_op}", flush=True)
+
+            if DISCORD_BOT_WEBHOOK_URL:
+                print(f"Discord Bot Webhook ({DISCORD_BOT_WEBHOOK_URL}) に通知を試みます。", flush=True)
+                try:
+                    response = requests.post(DISCORD_BOT_WEBHOOK_URL, timeout=10)
+                    response.raise_for_status()
+                    print(f"Discord Bot Webhookへの通知成功。ステータス: {response.status_code}", flush=True)
+                except requests.exceptions.RequestException as e:
+                    print(f"Discord Bot Webhookへの通知失敗: {e}", flush=True)
+            else:
+                print("DISCORD_BOT_WEBHOOK_URLが未設定のため、通知はスキップされました。", flush=True)
+
         except Exception as e:
-            print(f"インスタンス停止API呼び出し失敗: {e}", flush=True)
-            return f"Player count: {count}, but failed to stop instance.\n", 500
-            
+            print(f"インスタンス停止処理またはWebhook通知中にエラー: {e}", flush=True)
+            return f"Player count: {count}, but failed during stop process or notification.\n", 500
+
     elif count == -1:
         print("プレイヤー数取得失敗のため、インスタンスは停止しません。", flush=True)
-        # 失敗時は500エラーではなく、エラーを示すメッセージを返しつつもCloud Schedulerがリトライしないように2xxを返すことも検討
-        # ここではシンプルにプレイヤー数-1を返す
-        return f"Player count: {count} (Query failed)\n", 200 # もしくはエラーを示すために500
+        return f"Player count: {count} (Query failed)\n", 200
 
     print("main関数終了", flush=True)
     return f"Player count: {count}\n", 200 
