@@ -31,8 +31,8 @@
     | `e2-standard-2`    | 2           | 8           | 約 $60 - $80                | 約 $0.080 - $0.108  |
 
     _注意:_
-    _ 上記の月額料金は、1 ヶ月を 730 時間として計算した概算です。
-    _ 持続利用割引 (SUD) や確約利用割引 (CUD) を適用することで、さらにコストを削減できる場合があります。 \* 最新の正確な料金は、必ず [Google Cloud Platform Console](https://console.cloud.google.com/billing) または [Google Cloud Pricing Calculator](https://cloud.google.com/products/calculator) でご確認ください。
+    _ 上記の月額料金は、1 ヶ月を 730 時間として計算した概算です。Terraform のデフォルト設定では `e2-standard-2` が使用されます。_
+    \_ 持続利用割引 (SUD) や確約利用割引 (CUD) を適用することで、さらにコストを削減できる場合があります。 \* 最新の正確な料金は、必ず [Google Cloud Platform Console](https://console.cloud.google.com/billing) または [Google Cloud Pricing Calculator](https://cloud.google.com/products/calculator) でご確認ください。
     \_ **実際に試したところ、`e2-standard-2` 未満のスペックでは Minecraft サーバーが安定して動作しないことが確認されています。快適なプレイのためには `e2-standard-2` 以上のスペックを推奨します。**
 
   - **ブートディスク** (20GB デフォルト): 低容量であれば無料枠の範囲または月額数ドル未満。
