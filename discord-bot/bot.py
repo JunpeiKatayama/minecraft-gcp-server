@@ -7,6 +7,7 @@ from googleapiclient import discovery
 import asyncio
 from flask import Flask, request, abort
 import threading
+import datetime
 
 # 設定ファイルの読み込み
 try:
@@ -133,6 +134,69 @@ async def get_instance_external_ip():
         print(f"外部IPアドレスの取得中にエラー: {e}")
         return None
 
+async def get_boot_disk_name():
+    """GCEインスタンスのブートディスク名を取得する"""
+    try:
+        instance_details = compute_service.instances().get(project=GCP_PROJECT_ID, zone=GCP_ZONE, instance=GCP_INSTANCE_NAME).execute()
+        disks = instance_details.get('disks', [])
+        if disks:
+            boot_disk_info = next((disk for disk in disks if disk.get('boot')), None)
+            if boot_disk_info:
+                # 'source' は 'projects/PROJECT_ID/zones/ZONE/disks/DISK_NAME' の形式
+                source_disk_url = boot_disk_info.get('source')
+                if source_disk_url:
+                    return source_disk_url.split('/')[-1]
+        print("ブートディスクが見つかりませんでした。")
+        return None
+    except Exception as e:
+        print(f"ブートディスク名の取得中にエラー: {e}")
+        return None
+
+async def create_gce_snapshot(disk_name: str, snapshot_name_prefix: str):
+    """GCEディスクのスナップショットを作成する"""
+    try:
+        # スナップショット名に日時を付加して一意にする
+        timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        snapshot_name = f"{snapshot_name_prefix}-{timestamp}"
+        
+        snapshot_body = {
+            "name": snapshot_name,
+            "description": f"Snapshot of {disk_name} created by Discord Bot at {timestamp}"
+            # 必要に応じてラベルなどを追加
+            # "labels": {
+            #     "created-by": "discord-bot"
+            # }
+        }
+        
+        print(f"スナップショット作成リクエスト: disk='{disk_name}', name='{snapshot_name}'")
+        
+        request = compute_service.disks().createSnapshot(
+            project=GCP_PROJECT_ID,
+            zone=GCP_ZONE, # ゾーンディスクを想定
+            disk=disk_name,
+            body=snapshot_body
+        )
+        operation = request.execute()
+        print(f"スナップショット作成オペレーション開始: {operation}")
+        
+        # オペレーションの完了を待機 (同期的に待つ場合は下記のようなループが必要)
+        # self_link = operation.get('selfLink')
+        # while True:
+        #     op_request = compute_service.zoneOperations().get(project=GCP_PROJECT_ID, zone=GCP_ZONE, operation=operation['name'])
+        #     op_response = op_request.execute()
+        #     if op_response['status'] == 'DONE':
+        #         if 'error' in op_response:
+        #             raise Exception(f"スナップショット作成オペレーションエラー: {op_response['error']}")
+        #         print(f"スナップショット '{snapshot_name}' が正常に作成されました。")
+        #         break
+        #     await asyncio.sleep(5) # 5秒待機して再確認
+            
+        return True, snapshot_name, None # 成功、スナップショット名、エラーなし
+    except Exception as e:
+        error_message = f"スナップショット作成中にエラー: {e}"
+        print(error_message)
+        return False, None, str(e) # 失敗、スナップショット名なし、エラーメッセージ
+
 # --- Helper function for Webhook ---
 async def send_vm_stopped_notification():
     """VM停止通知をDiscordに送信する非同期ヘルパー関数"""
@@ -226,6 +290,67 @@ async def mc_start_command(interaction: discord.Interaction):
             await interaction.edit_original_response(content="サーバーの起動に失敗しました。エラーログを確認してください。")
     else:
         await interaction.followup.send(f"サーバーは現在 `{current_status}` 状態です。起動できません。", ephemeral=True)
+
+@bot.tree.command(name="mc_backup", description="Minecraftサーバーのバックアップ(スナップショット)を作成します。")
+async def mc_backup_command(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True) # 応答に時間がかかるため、ephemeralで
+
+    current_status = await get_instance_status()
+    if not current_status:
+        await interaction.followup.send("サーバーの状態を取得できませんでした。バックアップは作成できません。", ephemeral=True)
+        return
+
+    # サーバーが起動中でもスナップショットは作成可能だが、整合性のためには停止中が望ましい場合がある
+    # ここでは起動中でも許可する
+    if current_status not in ["RUNNING", "TERMINATED"]:
+         await interaction.followup.send(f"サーバーは現在 `{current_status}` 状態です。この状態ではバックアップを作成できません。", ephemeral=True)
+         return
+
+    await interaction.followup.send("サーバーのブートディスク名を取得しています...", ephemeral=True)
+    boot_disk_name = await get_boot_disk_name()
+
+    if not boot_disk_name:
+        await interaction.edit_original_response(content="サーバーのブートディスク名の取得に失敗しました。バックアップは作成できません。")
+        return
+
+    snapshot_prefix = f"{GCP_INSTANCE_NAME}-backup" # スナップショット名のプレフィックス
+    
+    await interaction.edit_original_response(content=f"`{boot_disk_name}` のスナップショット作成を開始します...")
+
+    success, snapshot_name, error = await create_gce_snapshot(boot_disk_name, snapshot_prefix)
+
+    if success:
+        message = f"""スナップショットの作成処理を開始しました。
+スナップショット名: `{snapshot_name}`
+作成完了まで数分かかることがあります。GCPコンソールで進捗を確認してください。"""
+        await interaction.edit_original_response(content=message)
+    else:
+        message = f"""スナップショットの作成に失敗しました。
+エラー: `{error}`"""
+        await interaction.edit_original_response(content=message)
+
+@bot.tree.command(name="help", description="利用可能なコマンドの一覧を表示します。")
+async def help_command(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+
+    embed = discord.Embed(
+        title="コマンドヘルプ",
+        description="利用可能なスラッシュコマンドは以下の通りです。",
+        color=discord.Color.blue()
+    )
+
+    commands_list = []
+    # bot.tree.get_commands() は ApplicationCommand オブジェクトのリストを返す
+    # discord.app_commands.Command
+    for command in bot.tree.get_commands():
+        commands_list.append(f"**/{command.name}**: {command.description}")
+
+    if commands_list:
+        embed.add_field(name="コマンド", value="\n".join(commands_list), inline=False)
+    else:
+        embed.add_field(name="コマンド", value="利用可能なコマンドはありません。", inline=False)
+
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 # --- Botの起動 & Flaskアプリの起動 ---
 async def main():

@@ -231,23 +231,28 @@ resource "google_project_iam_member" "discord_bot_sa_compute_admin" {
 // このリソースは、discord-botディレクトリの内容が変更された場合に再実行されるようにトリガーを設定
 // (実際のファイル内容のハッシュをトリガーにするのがより堅牢)
 locals {
-  # discord-bot ディレクトリ内のファイル群のハッシュを計算
-  # これにより、コード変更時にイメージビルドが再トリガーされる
-  discord_bot_src_dir_hash = filesha256("${path.module}/discord-bot/bot.py") # 主要なファイルのみ or glob
+  # discord-bot ディレクトリ内の主要なソースファイル (bot.py, requirements.txt, Dockerfile, config.sample.py) の
+  # 内容の変更を検知してイメージビルドをトリガーするためのハッシュを計算します。
+  # これらのファイルが `${path.module}/discord-bot/` ディレクトリに存在することを想定しています。
+  discord_bot_monitored_files = fileset("${path.module}/discord-bot", "{bot.py,requirements.txt,Dockerfile,config.sample.py}")
+  discord_bot_combined_hash = sha256(join("", [
+    for f in sort(local.discord_bot_monitored_files) : filesha256("${path.module}/discord-bot/${f}")
+  ]))
+  # discord_bot_src_dir_hash = filesha256("${path.module}/discord-bot/bot.py") # 主要なファイルのみ or glob
   # 他にも requirements.txt, Dockerfile などを含めるべきだが、例として bot.py のみ
 }
 
 resource "null_resource" "build_and_push_discord_bot_image" {
   triggers = {
     # bot.pyの内容が変更されたら再ビルド (より多くのファイルを監視することが望ましい)
-    bot_code_hash = local.discord_bot_src_dir_hash
+    source_code_hash = local.discord_bot_combined_hash # bot_code_hash から変更
     # Artifact Registryリポジトリが作成された後に実行
-    repo_url = google_artifact_registry_repository.discord_bot_repo.name 
+    repo_url = google_artifact_registry_repository.discord_bot_repo.name
   }
 
   provisioner "local-exec" {
     command = <<EOT
-      gcloud builds submit ${path.module}/discord-bot --region=${var.cloud_build_region} --tag ${var.cloud_build_region}-docker.pkg.dev/${var.project_id}/${google_artifact_registry_repository.discord_bot_repo.repository_id}/${var.discord_bot_image_name}:latest --quiet
+      gcloud builds submit ${path.module}/discord-bot --region=${var.cloud_build_region} --tag ${var.cloud_build_region}-docker.pkg.dev/${var.project_id}/${google_artifact_registry_repository.discord_bot_repo.repository_id}/${var.discord_bot_image_name}:${local.discord_bot_combined_hash} --quiet
     EOT
     working_dir = path.module
     # 環境変数は親プロセスから引き継がれる想定
@@ -271,7 +276,7 @@ resource "google_cloud_run_v2_service" "discord_bot_service" {
       max_instance_count = 1 # Botは通常1インスタンスで十分
     }
     containers {
-      image = "${var.cloud_build_region}-docker.pkg.dev/${var.project_id}/${google_artifact_registry_repository.discord_bot_repo.repository_id}/${var.discord_bot_image_name}:latest"
+      image = "${var.cloud_build_region}-docker.pkg.dev/${var.project_id}/${google_artifact_registry_repository.discord_bot_repo.repository_id}/${var.discord_bot_image_name}:${local.discord_bot_combined_hash}"
       ports {
         container_port = 8080 # DockerfileでEXPOSEしたポート
       }
