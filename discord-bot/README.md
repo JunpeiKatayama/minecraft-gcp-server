@@ -69,10 +69,12 @@
     python bot.py
     ```
 
-## 使い方 (予定)
+## 使い方
 
-- `/mc_start`: Minecraft サーバーを起動します。
-- `/mc_status`: Minecraft サーバーの状態を確認します。
+- `/help`: 利用可能なコマンドの一覧を表示します。
+- `/mc_backup`: Minecraft サーバーのバックアップ(スナップショット)を作成します。
+- `/mc_start`: Minecraft サーバーを起動します。成功すると IP アドレスを通知します。
+- `/mc_status`: Minecraft サーバーの現在の状態（RUNNING, TERMINATED など）を表示します。
 - VM 停止時には、指定されたチャンネルに自動で通知が送られ、「サーバー起動」ボタンが表示されます。
 
 ## 注意事項
